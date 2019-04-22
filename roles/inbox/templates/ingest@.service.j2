@@ -1,0 +1,6 @@
+[Unit]
+Description=Ingest a scanned image
+
+[Service]
+WorkingDirectory={{ inbox_root }}/scanadf
+ExecStart=/bin/systemd-inhibit --what=idle "{{ inbox_bindir }}/ingester" %i

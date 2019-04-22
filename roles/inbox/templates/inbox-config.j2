@@ -1,0 +1,37 @@
+{{ ansible_managed | comment }}
+{% macro entry(key, value, desc) -%}
+{{ desc | comment }}
+{% if value != omit  %}{{ key }}="{{ value }}"{% endif %}
+{%- endmacro %}
+#
+# Storage locations
+#
+
+# The location where collected and annotated scan bitmaps# will be placed.
+CABINET_DIR={{ inbox_root }}/cabinet
+
+#
+# Scanner setup
+#
+
+{{ entry('SCAN_WIDTH_MM', scan_width_mm, 'Width of scan in milimeters. Optional') }}
+{{ entry('SCAN_HEIGHT_MM', scan_height_mm, 'Height of scan in milimeters. Optional.') }}
+{{ entry('SCAN_RESOLUTION', scan_resolution, 'Resolution of scan in DPI. Optional.') }}
+{{ entry('SCAN_SOURCE', scan_source, 'The source of the scan. Optional.') }}
+{{ entry('SCAN_DEVICE', scan_device, 'The device driver used. Optional.') }}
+{{ entry('SCAN_MODE', scan_mode, 'The scanning mode used. Optional.') }}
+
+# The amount of time (in seconds) that the scanner script waits to
+# perform another scanadf attempt when the previous one failed.
+FAIL_DELAY=10
+
+{{ entry('QUIRK_OVERRIDE_SCAN_RES', quirks.override_scan_res, 'Override the SCAN_RES variable passed from scanadf to the scan script.') }}
+
+#
+# Scanner device make (vendor), model and serial number.
+# These values are stored in the scan bitmap EXIF metadata.
+# All of the below are optional.
+#
+{{ entry('SCAN_DEVICE_VENDOR', scan_device_vendor, '') }}
+{{ entry('SCAN_DEVICE_MODEL', scan_device_model, '') }}
+{{ entry('SCAN_DEVICE_SERIAL', scan_device_serial, '') }}

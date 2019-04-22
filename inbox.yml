@@ -1,0 +1,6 @@
+
+- hosts: inboxes
+  become: yes
+  roles:
+    - inbox
+

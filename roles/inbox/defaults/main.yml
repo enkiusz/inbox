@@ -1,0 +1,37 @@
+# The root of document-scanner directories
+inbox_root: /var/lib/inbox
+
+# This may be customizable based on distro
+inbox_cfgdir: /etc/default
+
+# The location where document-scanner scripts will be placed
+inbox_bindir: /usr/local/bin
+
+# The location where tmpfiles config will be placed
+systemd_tmpfiles_dir: /etc/tmpfiles.d
+# The location where systemd unit files will be placed
+systemd_unit_dir: /etc/systemd/system
+
+#
+# Customize to see fit
+#
+inbox_user: inbox
+inbox_group: inbox
+
+#
+# These are optional. Most of these parameters are being passed on to scanadf
+# and recorded in EXIF metadata of scanned bitmaps.
+#
+# scan_width_mm: 210
+# scan_height_mm: 297
+# scan_resolution: 300
+# scan_source: Duplex ADF
+# scan_device: scanadf device spec. string
+# scan_mode: Color
+# quirks:
+#  override_scan_res: true
+
+# scan_device_vendor: This is 
+# scan_device_model: SPARTA!
+# scan_device_serial: XXX
+

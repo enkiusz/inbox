@@ -1,0 +1,17 @@
+#!/bin/sh
+
+[ -z "$CONF_FILE" ] && CONF_FILE={{ inbox_cfgdir }}/inbox
+[ -r "$CONF_FILE" ] && . $(realpath $CONF_FILE)
+
+while true; do
+    (
+        scanadf \
+        ${SCAN_DEVICE:+-d "$SCAN_DEVICE"} \
+        ${SCAN_SOURCE:+--source "$SCAN_SOURCE"} \
+        ${SCAN_MODE:+--mode "$SCAN_MODE"} \
+        ${SCAN_WIDTH_MM:+-x "$SCAN_WIDTH_MM"} \
+        ${SCAN_HEIGTH_MM:+-y "$SCAN_HEIGHT_MM"} \
+            ${SCAN_RESOLUTION:+--resolution "$SCAN_RESOLUTION"} \
+        -S $(which handle-scan) 2>&1 || sleep "$FAIL_DELAY"
+    ) | grep -vF -e 'Scanned 0 pages'
+done

@@ -1,0 +1,25 @@
+#!/bin/sh
+{{ ansible_managed | comment }}
+
+[ -z "$CONF_FILE" ] && CONF_FILE="{{ inbox_cfgdir }}/inbox"
+[ -r "$CONF_FILE" ] && . $(realpath "$CONF_FILE")
+
+while [ "$1" ]; do
+	readonly image_file="$1"; shift
+	tmpfile=$(mktemp -t XXXXXXXXXXXX -p "{{ inbox_root }}/scanadf")
+	mv "$image_file" "$tmpfile"
+
+	# Override SCAN_RES as it's not properly setup by the driver
+	[ -n "$QUIRK_OVERRIDE_SCAN_RES" -a -n "$SCAN_RESOLUTION" ] && SCAN_RES="$SCAN_RESOLUTION"
+
+	#
+	# Log the scan time
+	#
+	export SCAN_TIMESTAMP="$(date --utc -Is)"
+
+	# These come from the configuration file not from scanadf
+	export SCAN_DEVICE_VENDOR SCAN_DEVICE_MODEL
+
+	env | egrep "SCAN_.+" > "$tmpfile.metadata"
+	systemctl start ingest@$(basename "$tmpfile").service
+done

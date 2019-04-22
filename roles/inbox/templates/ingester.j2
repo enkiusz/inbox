@@ -1,0 +1,37 @@
+#!/bin/sh
+
+[ -z "$CONF_FILE" ] && CONF_FILE="{{ inbox_cfgdir }}/inbox"
+[ -r "$CONF_FILE" ] && . $(realpath "$CONF_FILE")
+
+while [ "$1" ]; do
+	bitmap_file="$1"; shift
+	metadata_file="$bitmap_file.metadata"
+
+	# Use a subshell to not pollute current file metadata vars
+	# from previously sources metadata files
+	(
+	[ -r "$metadata_file" ] && . $(realpath "$metadata_file")
+
+	tmp_bitmap_file="$bitmap_file.png"
+
+	echo "Ingesting scan '$bitmap_file' into '$CABINET_DIR'"
+
+	convert "$bitmap_file" "$tmp_bitmap_file"
+
+	# Tags based on recommendations from Federal Agencies Digital Guidlines Initiative
+	# Reference: http://www.digitizationguidelines.gov/guidelines/TIFF_Metadata_Final.pdf
+	exiv2 	-M "set Exif.Image.XResolution $SCAN_RES/1" \
+		-M "set Exif.Image.YResolution $SCAN_RES/1" \
+		-M 'set Exif.Image.ResolutionUnit 2' \
+		-M "set Exif.Image.DateTime $(date -d $SCAN_TIMESTAMP '+%Y-%m-%d %H:%M:%S')" \
+		${SCAN_DEVICE_VENDOR:+-M "set Exif.Image.Make $SCAN_DEVICE_VENDOR"} \
+		${SCAN_DEVICE_MODEL:+-M "set Exif.Image.Model $SCAN_DEVICE_MODEL"} \
+		${SCAN_DEVICE_SERIAL:+-M "set Exif.Image.CameraSerialNumber $SCAN_DEVICE_SERIAL"} \
+		"$tmp_bitmap_file"
+
+	sha256=$(sha256sum "$tmp_bitmap_file" | awk '{print $1;}')
+	mv "$tmp_bitmap_file" "$CABINET_DIR/$sha256.png"
+	)
+
+	rm "$bitmap_file" "$metadata_file"
+done
