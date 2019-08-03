@@ -31,6 +31,7 @@ while [ "$1" ]; do
 
 	sha256=$(sha256sum "$tmp_bitmap_file" | awk '{print $1;}')
 	mv "$tmp_bitmap_file" "$CABINET_DIR/$sha256.png"
+	chattr +i "$CABINET_DIR/$sha256.png"
 	)
 
 	rm "$bitmap_file" "$metadata_file"
