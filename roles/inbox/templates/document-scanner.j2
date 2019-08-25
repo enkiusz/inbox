@@ -10,7 +10,7 @@ while true; do
         ${SCAN_SOURCE:+--source "$SCAN_SOURCE"} \
         ${SCAN_MODE:+--mode "$SCAN_MODE"} \
         ${SCAN_WIDTH_MM:+-x "$SCAN_WIDTH_MM"} \
-        ${SCAN_HEIGTH_MM:+-y "$SCAN_HEIGHT_MM"} \
+        ${SCAN_HEIGHT_MM:+-y "$SCAN_HEIGHT_MM"} \
             ${SCAN_RESOLUTION:+--resolution "$SCAN_RESOLUTION"} \
         -S $(which handle-scan) 2>&1 || sleep "$FAIL_DELAY"
     ) | grep -vF -e 'Scanned 0 pages'
