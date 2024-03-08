@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+export LC_ALL=C
+
+set -o errexit -o pipefail
+
+[ -z "$INBOX_CONF" ] && INBOX_CONF="/etc/default/inbox.conf"
+eval "$(ini2bash "$INBOX_CONF")"
+
+set -o nounset
+
+file="$1"; shift
+
+echo "$file: Trying to upload to '${output_rsync[target]}'" 1>&2
+
+[ -n "${output_rsync[connect_prog]}" ] && export RSYNC_CONNECT_PROG=${output_rsync[connect_prog]}
+rsync --remove-source-files ${output_rsync[credentials_file]:+--password-file=${output_rsync[credentials_file]}} \
+      --perms --times --omit-dir-times --xattrs --whole-file -v $file ${output_rsync[target]}
+rsync_exitcode=$?
+
+if [ $rsync_exitcode != 0 ]; then
+   # Move processed bitmap to cabinet for later processing
+   echo "$file: Upload failed, storing into cabinet '$cabinet' for retry later" 1>&2
+   mkdir -p ${output_cabinet[location]}/
+   mv $file ${output_cabinet[location]}/
+fi
+

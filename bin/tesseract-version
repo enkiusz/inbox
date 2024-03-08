@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+tesseract --version | head -n 1 | awk '{print $2;}' | tr -d ' \t\r\n'

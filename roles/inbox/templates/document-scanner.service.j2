@@ -1,9 +1,0 @@
-[Unit]
-Description=Automatic document scanner
-
-[Service]
-WorkingDirectory={{ inbox_root }}/scanadf
-ExecStart={{ inbox_bindir }}/document-scanner
-
-[Install]
-WantedBy=basic.target

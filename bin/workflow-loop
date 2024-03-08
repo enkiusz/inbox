@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+VERSION=0.9
+
+export LC_ALL=C
+
+set -o errexit -o pipefail
+
+[ -z "$INBOX_CONF" ] && INBOX_CONF="/etc/default/inbox.conf"
+eval "$(ini2bash "$INBOX_CONF")"
+
+set -o nounset
+
+software_tag="opencv/$(opencv-version);imagemagick/$(convert --version | head -n 1 | cut -d ' ' -f 3-);tesseract/$(tesseract-version);unpaper/$(unpaper --version | tr -d ' \t\r\n');workflow/$VERSION"
+
+echo "$software_tag" 1>&2
+
+function join_by { local IFS="$1"; shift; echo "$*"; }
+
+mkdir -m 0750 -p ${workflow[workflow_inbox]} ${output[spool_dir]} || true
+
+while true; do
+    find ${workflow[workflow_inbox]}/ -mindepth 1 -type d | while read jobpath; do
+    (
+        jobname=$(basename "$jobpath")
+        echo "$jobpath: starting" 1>&2
+
+        eval "$(ini2bash --prefix job_ "$jobpath"/metadata.ini)"
+        for page in $jobpath/*.ppm; do
+            if is-page-blank "$page"; then
+                rm "$page"
+                continue
+            fi
+            unpaper.sh "$page"
+        done
+        fix-orientation $jobpath
+
+        scanner_settings=''
+        for setting in ${!job_scanner_settings[@]}; do
+            # WHY??? bash associative array has an unexpected index '0' o_O which was never assigned
+            # is it a bug in bash?
+            [ "$setting" = "0" ] && continue
+
+            if [ -z "$scanner_settings" ]; then
+                scanner_settings="$setting=${job_scanner_settings[$setting]}"
+            else
+                scanner_settings="$scanner_settings;$setting=${job_scanner_settings[$setting]}"
+            fi
+
+        done
+
+        nonblank_pages=$(find $jobpath -type f -name '*.ppm')
+        echo "$jobpath: nonblank pages: '" $nonblank_pages "'" 1>&2
+        if [ $(echo "$nonblank_pages" | wc -l) -gt 1 ]; then
+            output_file="$jobpath/$jobname.pdf"
+            echo "$jobpath: Binding into a PDF/A file '$output_file'" 1>&2
+            img2pdf --pdfa ${workflow_img2pdf[icc_profile]:-/usr/share/color/icc/sRGB.icc} -o "$output_file" $(find $jobpath -type f -name '*.ppm' | sort)
+
+            exiftool -xmp:Make="${job_IFD0[make]}" -xmp:Model="${job_IFD0[model]}" -xmp:SerialNumber="${job_ExifIFD[serialnumber]}" \
+                     -xmp:Software="${job_IFD0[software]};$software_tag" \
+                     -xmp:XResolution="${job_IFD0[xresolution]}" -xmp:YResolution="${job_IFD0[yresolution]}" -xmp:ResolutionUnit="${job_IFD0[resolutionunit]}" \
+                     -xmp:FileSource="${job_ExifIFD[filesource]}" \
+                     -xmp:DateTimeDigitized="${job_ExifIFD[datetimedigitized]}" \
+                     -sep ';' "-xmp:DeviceSettingDescriptionSettings=$scanner_settings" \
+                     -q -overwrite_original_in_place "$output_file"
+
+            # Linearize and optimize PDF
+            qpdf --replace-input "$output_file"
+
+        elif [ $(echo "$nonblank_pages" | wc -l) = 1 ]; then
+            output_file="$jobpath/$jobname.png"
+            convert "$nonblank_pages" "$output_file"
+
+            exiftool -xmp:Make="${job_IFD0[make]}" -xmp:Model="${job_IFD0[model]}" -xmp:SerialNumber="${job_ExifIFD[serialnumber]}" \
+                     -xmp:Software="${job_IFD0[software]};$software_tag" \
+                     -xmp:XResolution="${job_IFD0[xresolution]}" -xmp:YResolution="${job_IFD0[yresolution]}" -xmp:ResolutionUnit="${job_IFD0[resolutionunit]}" \
+                     -xmp:FileSource="${job_ExifIFD[filesource]}" \
+                     -xmp:DateTimeDigitized="${job_ExifIFD[datetimedigitized]}" \
+                     -sep ';' "-xmp:DeviceSettingDescriptionSettings=$scanner_settings" \
+                     -q -overwrite_original_in_place "$output_file"
+
+        else
+            echo "$jobpath: No non-blank pages, skipping" 1>&2
+            output_file=""
+        fi
+
+        if [ -n "$output_file" ]; then
+            echo "$output_file: Sending to output '${output[type]}'"
+            if ! output.${output[type]} "$output_file"; then
+                spool_dir=${output[spool_dir]}
+                echo "$output_file: Output command failed, spooling into '$spool_dir' for later retry" 1>&2
+                mkdir -p $spool_dir/
+                mv $output_file $spool_dir/
+            fi
+        fi
+
+        echo "$jobpath: cleanup" 1>&2
+        rm -r "$jobpath"
+    )
+
+    done
+
+    sleep 1
+done

@@ -1,0 +1,396 @@
+#!/usr/bin/env python3
+
+import argparse
+import configparser
+from datetime import datetime, timezone
+import logging
+import queue
+import time
+import os
+from pathlib import Path
+import shutil
+import socket
+import sys
+import tempfile
+import threading
+
+import gi
+import pylcddc.client as client
+import pylcddc.widgets as widgets
+import pylcddc.screen as screen
+import pylcddc.responses
+import structlog
+
+gi.require_version('Libinsane', '1.0')
+from gi.repository import Libinsane, GObject
+
+__version__ = "0.9"
+
+# Reference: https://stackoverflow.com/a/49724281
+LOG_LEVEL_NAMES = [logging.getLevelName(v) for v in
+                   sorted(getattr(logging, '_levelToName', None) or logging._levelNames) if getattr(v, "real", 0)]
+
+log = structlog.get_logger()
+
+class LimitedLogger(GObject.GObject, Libinsane.Logger):
+    def do_log(self, lvl, msg):
+        if lvl <= Libinsane.LogLevel.WARNING:
+            return
+        if lvl == Libinsane.LogLevel.ERROR:
+            log.error(msg)
+        elif lvl == Libinsane.LogLevel.WARNING:
+            log.warn(msg)
+        elif lvl == Libinsane.LogLevel.INFO:
+            log.info(msg)
+        elif lvl == Libinsane.LogLevel.DEBUG:
+            log.debug(msg)
+        else:
+            log.debug(msg)
+
+
+class Pagelist(object):
+    def __init__(self, **kwargs):
+
+        self.config = kwargs['config']
+        self.api = kwargs['api']
+
+        if 'duplex' in self.config['scanner.settings']['source'].lower():
+            self.duplex = True
+        self.dpi = int(self.config['scanner.settings']['resolution'])
+
+        self.filename_format = self.config['workflow']['page_filename_format']
+
+        self.page_number = 0
+        self.sheet_number = 1
+        self.sheet_side = 0
+        self.sheet_side_names = [ '0front', '1back' ]
+        self.expected_pages = kwargs['expected_pages']
+        self.files = []
+        self.location = Path(tempfile.mkdtemp(prefix='job'))
+
+        log.debug('new pagelist', location=self.location, expected_pages=self.expected_pages)
+
+    def page_filename(self) -> Path:
+        return self.location / self.filename_format.format(n=self.sheet_number, side=self.sheet_side_names[self.sheet_side])
+
+    def next_page(self):
+
+        self.page_number += 1
+        if self.duplex:
+            self.sheet_side = ( self.sheet_side + 1 ) % len(self.sheet_side_names)
+            if self.sheet_side == 0:
+                self.sheet_number += 1
+        else:
+            self.sheet_number += 1
+
+    def add_page(self, width, height, img_bytes, **kwargs):
+
+        fn = f"{self.page_filename()}.ppm"
+        log.info('save page', filename=fn)
+
+        with open(fn, "wb") as f:
+            f.write(f"P6 {width} {height} 255 ".encode('ascii'))
+            f.write(img_bytes)
+
+        self.files.append(fn)
+        self.next_page()
+
+    @property
+    def eof(self) -> bool:
+        return self.page_number >= self.expected_pages
+
+    def export(self, output_dir: Path):
+        export_location = output_dir / self.location.name
+        shutil.move(self.location, export_location)
+
+        metadata = configparser.ConfigParser()
+
+        #
+        # The sections are exiftool.org group names
+        #
+        metadata['IFD0'] = {}
+        metadata['ExifIFD'] = {}
+        metadata['scanner.settings'] = self.config['scanner.settings']
+
+        metadata['IFD0']['Software'] = f'python/{sys.version};libinsane/{self.api.get_version()};{Path(__file__).name}/{__version__}'
+        metadata['IFD0']['HostComputer'] = socket.getfqdn()
+        metadata['IFD0']['Make'] = self.config['scanner']['vendor']
+        metadata['IFD0']['Model'] = self.config['scanner']['model']
+
+        # Reference: https://exiftool.org/TagNames/EXIF.html
+        # 0xa300 	FileSource 	undef 	ExifIFD
+        metadata['ExifIFD']['FileSource'] = "Reflection Print Scanner"
+        # 0xa431 	SerialNumber 	string 	ExifIFD 	(called BodySerialNumber by the EXIF spec.)
+        metadata['ExifIFD']['SerialNumber'] = self.config['scanner']['serial_no']
+
+        metadata['ExifIFD']['DateTimeDigitized'] = datetime.now(timezone.utc).strftime('%Y:%m:%d %H:%M:%SZ')
+
+        metadata['IFD0']['XResolution'] = str(self.dpi)
+        metadata['IFD0']['YResolution'] = str(self.dpi)
+        metadata['IFD0']['ResolutionUnit'] = 'inches'
+
+        metadata_filename = export_location / 'metadata.ini'
+        with open(metadata_filename, 'w') as f:
+            log.info('saving metadata', file=metadata_filename)
+            metadata.write(f)
+
+        return export_location
+
+
+class Display(object):
+
+    class KeyInterceptClient(client.Client):
+        def __init__(self, *args, **kwargs):
+            self.input_queue = kwargs['input_queue']
+            del kwargs['input_queue']
+            super().__init__(*args, **kwargs)
+
+        def _async_response_handler(self, response: pylcddc.responses.BaseResponse):
+            r = response.raw_response.rstrip()
+            if r.startswith('key ') and self.input_queue:
+                self.input_queue.put(r.removeprefix('key '))
+            super()._async_response_handler(response)
+
+    def __init__(self, *args, **kwargs):
+        self.config = kwargs['config']
+        self.input_queue = kwargs['input_queue']
+        self.hostname = self.config['display.lcdproc'].get('hostname', 'localhost')
+        self.port = int(self.config['display.lcdproc'].get('port', '13666'))
+
+        self.queue_status = widgets.String('workflow_status', 1,1, 'Workflow Status')
+        self.scan_status = widgets.String('scan_status', 1, 2, 'Scan Status')
+        self.main_scr = screen.Screen('main', [self.queue_status, self.scan_status],
+                                      heartbeat=screen.ScreenAttributeValues.Heartbeat.OFF)
+
+        self.client = self.KeyInterceptClient(self.hostname, self.port,
+                                         input_queue=self.input_queue)
+        self.client.add_screen(self.main_scr)
+
+        client_add_key_command = 'client_add_key Enter\n'.encode('ascii')
+        self.client._request(client_add_key_command)
+
+        client_add_key_command = 'client_add_key Down\n'.encode('ascii')
+        self.client._request(client_add_key_command)
+
+        self.rotator = ['-', '*']
+        self.h = 0
+
+        self.doc_num = 0
+        self.cabinet_num = 0
+        self.jam = False
+        self.error = False
+
+    def update(self, pagelist: Pagelist):
+
+        self.h = (self.h + 1) % len(self.rotator)
+        self.queue_status.text = f"D:{self.doc_num:02d} C:{self.cabinet_num:02d}   {'E' if self.error else ' '}{'J' if self.jam else ' '} {self.rotator[self.h]}"
+        if pagelist:
+            self.scan_status.text = f"{pagelist.location.name[0:8]} {pagelist.page_number:02d} / {pagelist.expected_pages:02d}"
+
+        self.client.update_screens([self.main_scr], True)
+
+    def wipe_scan_status(self):
+        while any([ ord(c) > 0x20 for c in self.scan_status.text]):
+            s = list(self.scan_status.text)
+            for i in reversed(range(len(s))):
+                s[i] = chr(max(ord(s[i]) - (4+(i//3)), 0x20))
+            self.scan_status.text = ''.join(s)
+            self.client.update_screens([self.main_scr], True)
+
+
+def get_device(api, dev_id=None):
+    log.info('opening device', dev_id=dev_id)
+    if dev_id is None:
+        log.debug('querying devices')
+        devs = api.list_devices(Libinsane.DeviceLocations.ANY)
+        log.debug('found devices', num_devices=len(devs))
+        for dev in devs:
+            log.debug('device', id=dev.get_dev_id(), dev=dev.to_string())
+        dev_id = devs[0].get_dev_id()
+
+    dev = api.get_device(dev_id)
+    log.info('opened device', id=dev_id, name=dev.get_name())
+    return dev
+
+
+def get_source(dev, source_name):
+    log.debug('querying sources', dev=dev.get_name())
+    sources = dev.get_children()
+
+    for src in sources:
+        log.debug('source found', dev=dev.get_name(), source=src.get_name())
+        if src.get_name() == source_name:
+            source = src
+            break
+    else:
+        if source_name is None:
+            source = sources[0] if len(sources) > 0 else dev
+        elif source_name == "root":
+            source = dev
+        else:
+            log.error('source not found', dev=dev.get_name(), source=source_name)
+            sys.exit(2)
+    log.info('using source', dev=dev.get_name(), source=source.get_name())
+    return source
+
+
+# Based on examples on https://doc.openpaper.work/libinsane/latest/libinsane/howto_python.html
+def scan(api, source, **kwargs):
+    config = kwargs['config']
+    pages = []
+
+    log.debug('starting scan')
+    session = source.scan_start()
+    try:
+        while not session.end_of_feed():
+            scan_params = session.get_scan_parameters()
+            log.info('scan params', format=scan_params.get_format(),
+                     width=scan_params.get_width(), height=scan_params.get_height(),
+                     image_size=scan_params.get_image_size())
+
+            img_bytes = bytearray(scan_params.get_image_size())
+            pos = 0
+            while not session.end_of_page():
+                data = session.read_bytes(int(config['libinsane']['read_block_size']))
+                d = data.get_data()
+                img_bytes[pos:pos+len(d)] = d
+                pos += len(d)
+
+            # Only format supported at this point
+            assert( scan_params.get_format() == Libinsane.ImgFormat.RAW_RGB_24 )
+
+            (w, h) = (scan_params.get_width(), scan_params.get_height())
+            assert( h == int(len(img_bytes) / 3 / scan_params.get_width()) )  # Sanity check
+
+            pages.append( (w, h, img_bytes) )
+    finally:
+        session.cancel()
+
+    return pages
+
+
+def main():
+    config = configparser.ConfigParser()
+    config.read([ os.getenv('INBOX_CONF', '/etc/default/inbox.conf') ])
+
+    parser = argparse.ArgumentParser(prog=Path(__file__).name)
+
+    parser.add_argument('--loglevel', choices=LOG_LEVEL_NAMES, default='INFO', help='Change log level')
+
+    args = parser.parse_args()
+
+    # Restrict log message to be above selected level
+    structlog.configure( wrapper_class=structlog.make_filtering_bound_logger(getattr(logging, args.loglevel)) )
+    Libinsane.register_logger( LimitedLogger() )
+
+    api = Libinsane.Api.new_safebet()
+
+    log.info('environment', libinsane_version=api.get_version(), python_version=sys.version, inbox=__version__, uid=os.getuid(), gid=os.getgid())
+    log.debug('config', config=config, args=args)
+
+    # Create workflow directory
+    Path(config['workflow']['workflow_inbox']).mkdir(mode=0o750, parents=True, exist_ok=True)
+
+    dev = get_device(api, dev_id=config['scanner']['device_id'])
+    source = get_source(dev, None)
+
+    opts = { opt.get_name(): opt for opt in source.get_options() }
+    for (name, opt) in opts.items():
+        try:
+            log.debug('option', name=opt.get_name(), value=opt.get_value(),
+                     constraint=opt.get_constraint(), constraint_type=opt.get_constraint_type(),
+                     title=opt.get_title(), value_type=opt.get_value_type(), unit=opt.get_value_unit(),
+                     readable=opt.is_readable(), writable=opt.is_writable())
+        except Exception as exc:
+            log.warn('failed to read option', name=opt.get_name(), _exc_info=exc)
+
+    for (name, value) in config['scanner.settings'].items():
+
+        if name not in opts:
+            log.warn('unknown scanner option', option=name, available_options=list(opts.keys()))
+            continue
+
+        if not opts[name].is_writable():
+            log.warn('option is not writable', option=name)
+            continue
+
+        if 'gint' in str(opts[name].get_value_type()):
+            value = int(value)
+        if 'gdouble' in str(opts[name].get_value_type()):
+            value = float(value)
+        if 'gboolean' in str(opts[name].get_value_type()):
+            value = bool(value)
+
+        log.info('setting option', name=name, value=value, type=opts[name].get_value_type())
+        opts[name].set_value(value)
+
+    input_queue = queue.SimpleQueue()
+    disp = Display(config=config, input_queue=input_queue)
+
+    pagelist = Pagelist(expected_pages=int(config['workflow']['default_pagecount']), api=api, config=config)
+
+    pages = []
+    while True:
+        try:
+            key = input_queue.get(block=False)
+            log.info('key', key=key)
+
+            if key == 'Down':
+                pagelist.expected_pages += 2
+                disp.update(pagelist=pagelist)
+            elif key == 'Enter':
+                pagelist.expected_pages -= 2
+                disp.update(pagelist=pagelist)
+            else:
+                log.warning('unsupported key', key=key)
+
+        except queue.Empty:
+            pass
+
+        workflow_inbox = Path(config['workflow']['workflow_inbox'])
+        spool_dir = Path(config['output']['spool_dir'])
+
+        disp.doc_num = len(list(workflow_inbox.glob('*')))
+        disp.cabinet_num = len(list(spool_dir.glob('*')))
+
+        disp.update(pagelist=pagelist)
+        try:
+            pages.extend( scan(api, source, config=config) )
+
+            # If we got here there is no paper jam and no error
+            disp.jam = False
+            disp.error = False
+        except gi.repository.GLib.GError as gerror:
+            if 'I/O Error' in str(gerror):
+                log.error('i/o error', gerror=gerror)
+                disp.error = True
+            else:
+                disp.error = False
+
+            if 'Device jammed' in str(gerror):
+                log.error('feeder jammed', gerror=gerror)
+                disp.jam = True
+            else:
+                disp.jam = False
+
+        while len(pages) > 0:
+
+            while len(pages) > 0 and not pagelist.eof:
+                (w, h, img_bytes) = pages.pop(0)
+                pagelist.add_page(w, h, img_bytes)
+                disp.update(pagelist=pagelist)
+
+            if pagelist.eof:
+                job_path = pagelist.export(Path(config['workflow']['workflow_inbox']))
+                log.info('moved to workflow inbox', path=job_path)
+
+                disp.wipe_scan_status()
+
+                time.sleep(0.3)
+                pagelist = Pagelist(expected_pages=int(config['workflow']['default_pagecount']),
+                                    api=api, config=config)
+                disp.update(pagelist=pagelist)
+
+
+if __name__ == "__main__":
+    main()

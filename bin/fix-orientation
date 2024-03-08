@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+
+import argparse
+import configparser
+from operator import itemgetter
+import os
+from pathlib import Path
+import re
+import sys
+
+from PIL import Image
+import pytesseract
+import structlog
+
+log = structlog.get_logger()
+
+def main():
+    config = configparser.ConfigParser()
+    config.read([ os.getenv('INBOX_CONF', '/etc/default/inbox.conf') ])
+
+    parser = argparse.ArgumentParser(prog=Path(__file__).name)
+    parser.add_argument('jobpaths', action='append', help='Job directories with page image files')
+
+    args = parser.parse_args()
+
+    log.debug('config', args=args, config=config)
+
+    for jobpath in args.jobpaths:
+
+        log.info('processing job', path=jobpath)
+
+        orientations = dict()
+        for img_file in Path(jobpath).glob("*.ppm"):
+            img = Image.open(img_file)
+            log.debug('page image', img=img, name=img_file)
+
+            angle = None
+            confidence = 0
+            try:
+                psm = pytesseract.image_to_osd(img, output_type=pytesseract.Output.DICT)
+                angle=psm['orientation']
+                confidence=psm['orientation_conf']
+            except pytesseract.pytesseract.TesseractError as e:
+                log.warn('tesseract error', name=img_file, exc_info=e)
+
+            log.debug('orientation', name=img_file, angle=angle, confidence=confidence)
+            orientations[img_file] = dict(angle=angle, confidence=confidence)
+
+        for (img_file, orientation) in orientations.items():
+            if img_file.stat().st_size == 0:
+                log.debug('empty placeholder', file=img_file)
+                continue
+
+            if orientation['angle'] is None:
+
+                # Check orientation on other side of the same sheet
+                (sheet, side) = itemgetter(1,2)(str(img_file.name).split('-'))
+                side = side.removesuffix('.ppm')
+
+                log.debug('no orientation, trying other side of sheet', file=img_file, sheet=sheet, side=side)
+                if side == '0front':
+                    orientation = dict( orientations[ Path(str(img_file).replace('0front', '1back')) ] )
+                elif side == '1back':
+                    orientation = dict( orientations[ Path(str(img_file).replace('1back', '0front')) ] )
+                    orientation['angle'] += 180
+                else:
+                    log.warn('unknown side', file=img_file, side=side)
+                    continue
+
+                # Get the orientation for the other side of the sheet
+                if orientation['angle'] is None:
+                    log.warn('no orientation for other side of sheet', file=img_file)
+                    continue
+
+            log.info('rotating', img_file=img_file, angle=-1*orientation['angle'])
+            os.system(f"convert {img_file} -rotate -{orientation['angle']} {img_file}")
+
+if __name__ == "__main__":
+    main()

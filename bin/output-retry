@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+
+export LC_ALL=C
+
+set -o errexit -o pipefail
+
+[ -z "$INBOX_CONF" ] && INBOX_CONF="/etc/default/inbox.conf"
+eval "$(ini2bash "$INBOX_CONF")"
+
+set -o nounset
+
+spool_dir=${output}[spool_dir]
+echo "Processing files in spool directory '$spool_dir'" 1>&2
+
+find "$spool_dir" -type f | while read file; do
+    echo "$file: Sending to output '${output[type]}'"
+    if ! output.${output[type]} "$file"; then
+        echo "$file: Output command failed, leaving in spool directory '$spool_dir' for later retry" 1>&2
+    else
+        rm -f "$file"
+    fi
+done
+

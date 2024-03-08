@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+VERSION=0.9
+
+export LC_ALL=C
+
+set -o errexit -o pipefail
+
+[ -z "$INBOX_CONF" ] && INBOX_CONF="/etc/default/inbox.conf"
+eval "$(ini2bash "$INBOX_CONF")"
+
+set -o nounset
+
+spool_dir=${output[spool_dir]}
+
+echo "checking '$spool_dir'" 1>&2
+
+find $spool_dir/ -type f | while read doc_file; do
+    echo "$doc_file: Sending to output '${output[type]}'" 1>&2
+    if ! output.${output[type]} "$doc_file"; then
+        echo "$doc_file: Cannot send to output, will retry later" 1>&2
+    else
+        rm -f "$doc_file"
+    fi
+done
