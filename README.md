@@ -64,9 +64,4 @@ In order to use this code with NixOS you need to do four things:
 The previous version of this code has used Ansible for setup. As I am no longer using Ubuntu in my personal infrastructure the Ansible roles have been removed. In
 cas they need to be accessed the old repository version has been markedwith the 'v0' tag.
 
-## Limitations
-
-Pieces of the LCD UI code have not been implemented yet. Notably, the first line of LCD output should contain the number of documents queued for workflow processing
-and stored in the cabinet for later upload. This feature is not yet implemented.
-
 
