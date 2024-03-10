@@ -69,7 +69,8 @@ def main():
                     if p in orientations:
                         orientation = dict( orientations[p] )
                         # Back side is assumed to be rotated 180 degrees with respect to the front side
-                        orientation['angle'] += 180
+                        if orientation['angle'] is not None:
+                            orientation['angle'] += 180
                     else:
                         orientation = dict(angle=None, confidence=0)
                 else:
