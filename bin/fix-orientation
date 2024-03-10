@@ -59,10 +59,19 @@ def main():
 
                 log.debug('no orientation, trying other side of sheet', file=img_file, sheet=sheet, side=side)
                 if side == '0front':
-                    orientation = dict( orientations[ Path(str(img_file).replace('0front', '1back')) ] )
+                    p = Path(str(img_file).replace('0front', '1back'))
+                    if p in orientations:
+                        orientation = dict(orientations[p])
+                    else:
+                        orientation = dict(angle=None, confidence=0)
                 elif side == '1back':
-                    orientation = dict( orientations[ Path(str(img_file).replace('1back', '0front')) ] )
-                    orientation['angle'] += 180
+                    p = Path(str(img_file).replace('1back', '0front'))
+                    if p in orientations:
+                        orientation = dict( orientations[p] )
+                        # Back side is assumed to be rotated 180 degrees with respect to the front side
+                        orientation['angle'] += 180
+                    else:
+                        orientation = dict(angle=None, confidence=0)
                 else:
                     log.warn('unknown side', file=img_file, side=side)
                     continue
