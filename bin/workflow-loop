@@ -49,8 +49,9 @@ while true; do
         done
 
         nonblank_pages=$(find $jobpath -type f -name '*.ppm')
-        echo "$jobpath: nonblank pages: '" $nonblank_pages "'" 1>&2
-        if [ $(echo "$nonblank_pages" | wc -l) -gt 1 ]; then
+        nonblank_pages_num=$(find $jobpath -type f -name '*.ppm' | wc -l)
+        echo "$jobpath: nonblank pages: '$nonblank_pages'" 1>&2
+        if [ "$nonblank_pages_num" -gt 1 ]; then
             output_file="$jobpath/$jobname.pdf"
             echo "$jobpath: Binding into a PDF/A file '$output_file'" 1>&2
             img2pdf --pdfa ${workflow_img2pdf[icc_profile]:-/usr/share/color/icc/sRGB.icc} -o "$output_file" $(find $jobpath -type f -name '*.ppm' | sort)
@@ -66,7 +67,7 @@ while true; do
             # Linearize and optimize PDF
             qpdf --replace-input "$output_file"
 
-        elif [ $(echo "$nonblank_pages" | wc -l) = 1 ]; then
+        elif [ "$nonblank_pages_num" = 1 ]; then
             output_file="$jobpath/$jobname.png"
             convert "$nonblank_pages" "$output_file"
 
