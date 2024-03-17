@@ -11,6 +11,7 @@ eval "$(ini2bash "$INBOX_CONF")"
 set -o nounset
 
 spool_dir=${output[spool_dir]}
+[ -d "$spool_dir" ] || mkdir -p "$spool_dir"
 
 echo "checking '$spool_dir'" 1>&2
 
