@@ -100,9 +100,6 @@ class Pagelist(object):
         return self.page_number >= self.expected_pages
 
     def export(self, output_dir: Path):
-        export_location = output_dir / self.location.name
-        shutil.move(self.location, export_location)
-
         metadata = configparser.ConfigParser()
 
         #
@@ -110,29 +107,31 @@ class Pagelist(object):
         #
         metadata['IFD0'] = {}
         metadata['ExifIFD'] = {}
-        metadata['scanner.settings'] = self.config['scanner.settings']
 
         metadata['IFD0']['Software'] = f'python/{sys.version};libinsane/{self.api.get_version()};{Path(__file__).name}/{__version__}'
         metadata['IFD0']['HostComputer'] = socket.getfqdn()
         metadata['IFD0']['Make'] = self.config['scanner']['vendor']
         metadata['IFD0']['Model'] = self.config['scanner']['model']
+        metadata['IFD0']['XResolution'] = str(self.dpi)
+        metadata['IFD0']['YResolution'] = str(self.dpi)
+        metadata['IFD0']['ResolutionUnit'] = 'inches'
 
         # Reference: https://exiftool.org/TagNames/EXIF.html
         # 0xa300 	FileSource 	undef 	ExifIFD
         metadata['ExifIFD']['FileSource'] = "Reflection Print Scanner"
         # 0xa431 	SerialNumber 	string 	ExifIFD 	(called BodySerialNumber by the EXIF spec.)
         metadata['ExifIFD']['SerialNumber'] = self.config['scanner']['serial_no']
-
         metadata['ExifIFD']['DateTimeDigitized'] = datetime.now(timezone.utc).strftime('%Y:%m:%d %H:%M:%SZ')
 
-        metadata['IFD0']['XResolution'] = str(self.dpi)
-        metadata['IFD0']['YResolution'] = str(self.dpi)
-        metadata['IFD0']['ResolutionUnit'] = 'inches'
+        metadata['scanner.settings'] = self.config['scanner.settings']
 
-        metadata_filename = export_location / 'metadata.ini'
+        metadata_filename = self.location / 'metadata.ini'
         with open(metadata_filename, 'w') as f:
             log.info('saving metadata', file=metadata_filename)
             metadata.write(f)
+
+        export_location = output_dir / self.location.name
+        shutil.move(self.location, export_location)
 
         return export_location
 
@@ -162,6 +161,7 @@ class Display(object):
         self.main_scr = screen.Screen('main', [self.queue_status, self.scan_status],
                                       heartbeat=screen.ScreenAttributeValues.Heartbeat.OFF)
 
+        log.debug('connecting to lcdproc', hostname=self.hostname, port=self.port)
         self.client = self.KeyInterceptClient(self.hostname, self.port,
                                          input_queue=self.input_queue)
         self.client.add_screen(self.main_scr)
@@ -181,21 +181,26 @@ class Display(object):
         self.error = False
 
     def update(self, pagelist: Pagelist):
+        if self.client:
+            self.h = (self.h + 1) % len(self.rotator)
+            self.queue_status.text = f"D:{self.doc_num:02d} C:{self.cabinet_num:02d}   {'E' if self.error else ' '}{'J' if self.jam else ' '} {self.rotator[self.h]}"
+            if pagelist:
+                self.scan_status.text = f"{pagelist.location.name[0:8]} {pagelist.page_number:02d} / {pagelist.expected_pages:02d}"
 
-        self.h = (self.h + 1) % len(self.rotator)
-        self.queue_status.text = f"D:{self.doc_num:02d} C:{self.cabinet_num:02d}   {'E' if self.error else ' '}{'J' if self.jam else ' '} {self.rotator[self.h]}"
-        if pagelist:
-            self.scan_status.text = f"{pagelist.location.name[0:8]} {pagelist.page_number:02d} / {pagelist.expected_pages:02d}"
-
-        self.client.update_screens([self.main_scr], True)
+            self.client.update_screens([self.main_scr], True)
+        else:
+            log.error('lcdproc connection is not good', conn_open=not self.client.closed, conn_good=bool(self.client))
 
     def wipe_scan_status(self):
-        while any([ ord(c) > 0x20 for c in self.scan_status.text]):
-            s = list(self.scan_status.text)
-            for i in reversed(range(len(s))):
-                s[i] = chr(max(ord(s[i]) - (4+(i//3)), 0x20))
-            self.scan_status.text = ''.join(s)
-            self.client.update_screens([self.main_scr], True)
+        if self.client:
+            while any([ ord(c) > 0x20 for c in self.scan_status.text]):
+                s = list(self.scan_status.text)
+                for i in reversed(range(len(s))):
+                    s[i] = chr(max(ord(s[i]) - (4+(i//3)), 0x20))
+                self.scan_status.text = ''.join(s)
+                self.client.update_screens([self.main_scr], True)
+        else:
+            log.error('lcdproc connection is not good', conn_open=not self.client.closed, conn_good=bool(self.client))
 
 
 def get_device(api, dev_id=None):
@@ -275,7 +280,7 @@ def main():
 
     parser = argparse.ArgumentParser(prog=Path(__file__).name)
 
-    parser.add_argument('--loglevel', choices=LOG_LEVEL_NAMES, default='INFO', help='Change log level')
+    parser.add_argument('--loglevel', choices=LOG_LEVEL_NAMES, default=os.getenv('LOGLEVEL', 'INFO'), help='Change log level')
 
     args = parser.parse_args()
 
@@ -285,7 +290,7 @@ def main():
 
     api = Libinsane.Api.new_safebet()
 
-    log.info('environment', libinsane_version=api.get_version(), python_version=sys.version, inbox=__version__, uid=os.getuid(), gid=os.getgid())
+    log.info('environment', libinsane_version=api.get_version(), python_version=sys.version, scanloop=__version__, uid=os.getuid(), gid=os.getgid())
     log.debug('config', config=config, args=args)
 
     # Create workflow directory
@@ -391,6 +396,7 @@ def main():
                                     api=api, config=config)
                 disp.update(pagelist=pagelist)
 
+        time.sleep(float(config['libinsane']['poll_loop_delay']))
 
 if __name__ == "__main__":
     main()
