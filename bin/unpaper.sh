@@ -15,7 +15,7 @@ die() {
 }
 
 usage() {
-    die "Usage: $0 [-v] [-k] [-o <output file>] [image]"
+    die "Usage: $0 [-v] [-p] [-k] [-o <output file>] [image]"
 }
 
 
