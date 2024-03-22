@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+
+import sys
+from PIL import Image
+import pytesseract
+import structlog
+
+img_file = sys.argv[1]
+
+img = Image.open(img_file)
+
+angle = None
+confidence = 0
+try:
+  psm = pytesseract.image_to_osd(img, output_type=pytesseract.Output.DICT)
+  angle=psm['orientation']
+  confidence=psm['orientation_conf']
+  print(f"{angle} {confidence} {img_file}")
+
+except pytesseract.pytesseract.TesseractError as e:
+  print(e, file=sys.stderr)
+  print('NaN NaN tesseract error')
+
+sys.exit(0)

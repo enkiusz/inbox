@@ -1,5 +1,5 @@
 { stdenv, pkgs, ... }: stdenv.mkDerivation rec {
-  version = "0.9";
+  version = "0.91";
   name = "inbox-${version}";
 
   src = ./.;

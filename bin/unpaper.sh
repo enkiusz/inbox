@@ -15,7 +15,7 @@ die() {
 }
 
 usage() {
-    die "Usage: $0 [-v] [-p] [-k] [-o <output file>] [image]"
+    die "Usage: $0 [-v] [-p] [-k] [-r] [-o <output file>] [image]"
 }
 
 
@@ -43,11 +43,26 @@ masksize() {
     )
 }
 
+fix_orientation() {
+    file="$1"
+    echo "$file: detecting orientation"
+    ~/repos/github.com/enkiusz/inbox/bin/detect-orientation "$file" | (
+        read angle confidence filename
+        echo "$file: detected orientation angle=$angle confidence=$confidence filename='$filename'"
+        if [ "$angle" != "NaN" -a "$angle" != "NaN" ]; then
+            t=$(mktemp -p /tmp unpaper-XXXXXXX.png)
+            convert -rotate -$angle "$file" "$t"
+            mv "$t" "$file"
+        fi
+    )
+}
+
 preserve_attributes=""
 verbose=""
 keep_tmpfiles=""
+rotate=""
 
-while getopts ":vpko:" o; do
+while getopts ":vpkro:" o; do
     case "$o" in
         v)
             verbose=1
@@ -60,6 +75,9 @@ while getopts ":vpko:" o; do
             ;;
         o)
             OUTIMG=$OPTARG
+            ;;
+        r)
+            rotate=1
             ;;
         *)
             usage
@@ -126,12 +144,14 @@ image-centroid $tmpfile | while read x y filename; do
         echo $MASK | masksize | (
             read dx dy
             convert $tmpfile3 -gravity Center -crop $((dx))x$((dy))+0+0\! -negate "$OUTIMG"
+            [ -n "$rotate" ] && fix_orientation "$OUTIMG"
         )
 
     else
         echo "$IMG: No mask could be detected, skipping" 1>&2
         if [ -z "$in_place" ]; then
            cp "$IMG" "$OUTIMG"
+           [ -n "$rotate" ] && fix_orientation "$OUTIMG"
         fi
     fi
 
