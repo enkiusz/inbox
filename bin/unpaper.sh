@@ -95,7 +95,7 @@ fi
 
 if [ -n "$preserve_attributes" ]; then
     exif_dir=$(tmpdir)
-    tempfiles+=($exif_dir)
+    tmpfiles+=($exif_dir)
 
     echo "$IMG: EXIF and timestmaps will be preserved in '$exif_dir'" 1>&2
     exiv2 -l $exif_dir -e a extract "$IMG"
