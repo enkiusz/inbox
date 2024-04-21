@@ -3,6 +3,7 @@
 export LC_ALL=C
 
 set -o errexit -o pipefail
+set -x 
 
 [ -z "$INBOX_CONF" ] && INBOX_CONF="/etc/default/inbox.conf"
 eval "$(ini2bash "$INBOX_CONF")"
@@ -22,11 +23,11 @@ usage() {
 tmpfiles=()  # Track list of tmpfiles
 
 tmpdir() {
-    mktemp -d -p /tmp unpaper-XXXXXXX
+    mktemp -d -t unpaper-XXXXXXX
 }
 
 tmpfile() {
-    mktemp -p /tmp unpaper-XXXXXXX.ppm
+    mktemp -t unpaper-XXXXXXX.ppm
 }
 
 cleanup_tmpfiles() {
@@ -50,7 +51,7 @@ fix_orientation() {
         read angle confidence filename
         echo "$file: detected orientation angle=$angle confidence=$confidence filename='$filename'" 1>&2
         if [ "$angle" != "NaN" -a "$angle" != "NaN" ]; then
-            t=$(mktemp -p /tmp unpaper-XXXXXXX.png)
+            t=$(mktemp unpaper-XXXXXXX.png)
             convert -rotate -$angle "$file" "$t"
             mv "$t" "$file"
         fi
@@ -110,7 +111,6 @@ else
     echo "$IMG: Output image will be '$OUTIMG'" 1>&2
 fi
 
-
 tmpfile=$(tmpfile)
 tmpfiles+=($tmpfile)
 echo "$IMG: Deskewing and adding border < '$IMG' > '$tmpfile'" 1>&2
@@ -149,19 +149,24 @@ image-centroid $tmpfile | while read x y filename; do
         echo $MASK | masksize | (
             read dx dy
             echo "$IMG: Recentering and cropping masked region < '$tmpfile3' > '$OUTIMG'" 1>&2
-            convert $tmpfile3 -gravity Center -crop $((dx))x$((dy))+0+0\! -negate "$OUTIMG"
-            [ -n "$rotate" ] && fix_orientation "$OUTIMG"
+            echo convert -debug all $tmpfile3 -gravity Center -crop $((dx))x$((dy))+0+0\! -negate "$OUTIMG"
+            convert -debug all $tmpfile3 -gravity Center -crop $((dx))x$((dy))+0+0\! -negate "$OUTIMG"
+            echo "Convertion completed rval=$?"
+            [ "z$rotate" = "z1" ] && fix_orientation "$OUTIMG"
+            echo "z"
         )
-
+        echo "aaa"
     else
         echo "$IMG: No mask could be detected, skipping" 1>&2
         if [ -z "$in_place" ]; then
            cp "$IMG" "$OUTIMG"
-           [ -n "$rotate" ] && fix_orientation "$OUTIMG"
+           [ "z$rotate" = "z1" ] && fix_orientation "$OUTIMG"
         fi
     fi
 
+    echo "Checking if preserve attributes is set"
     if [ -n "$preserve_attributes" ]; then
+        echo "Preserving attributes"
         # Copy the EXIF information and timestamps
         exiv2 -l $exif_dir -i a insert "$OUTIMG"
         touch --reference $exif_dir/$(basename "$IMG") "$OUTIMG"
@@ -171,3 +176,4 @@ image-centroid $tmpfile | while read x y filename; do
     cleanup_tmpfiles
 done
 
+exit 0

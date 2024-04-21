@@ -24,6 +24,9 @@ while true; do
         jobname=$(basename "$jobpath")
         echo "$jobpath: starting" 1>&2
 
+        export TMPDIR="$jobpath/tmp"
+        mkdir -p "$TMPDIR"
+
         eval "$(ini2bash --prefix job_ "$jobpath"/metadata.ini)"
         for page in $jobpath/*.ppm; do
             if is-page-blank "$page"; then
@@ -31,6 +34,7 @@ while true; do
                 continue
             fi
             unpaper.sh "$page"
+            echo "$jobpath: unpaper done on page '$page'" 1>&2
         done
         fix-orientation $jobpath
 
@@ -48,8 +52,8 @@ while true; do
 
         done
 
-        nonblank_pages=$(find $jobpath -type f -name '*.ppm')
-        nonblank_pages_num=$(find $jobpath -type f -name '*.ppm' | wc -l)
+        nonblank_pages=$(find $jobpath -maxdepth 1 -mindepth 1 -type f -name '*.ppm')
+        nonblank_pages_num=$(find $jobpath -maxdepth 1 -mindepth 1 -type f -name '*.ppm' | wc -l)
         echo "$jobpath: nonblank pages: '$nonblank_pages'" 1>&2
         if [ "$nonblank_pages_num" -gt 1 ]; then
             output_file="$jobpath/$jobname.pdf"
