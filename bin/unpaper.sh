@@ -45,10 +45,10 @@ masksize() {
 
 fix_orientation() {
     file="$1"
-    echo "$file: detecting orientation"
+    echo "$file: detecting orientation" 1>&2
     ~/repos/github.com/enkiusz/inbox/bin/detect-orientation "$file" | (
         read angle confidence filename
-        echo "$file: detected orientation angle=$angle confidence=$confidence filename='$filename'"
+        echo "$file: detected orientation angle=$angle confidence=$confidence filename='$filename'" 1>&2
         if [ "$angle" != "NaN" -a "$angle" != "NaN" ]; then
             t=$(mktemp -p /tmp unpaper-XXXXXXX.png)
             convert -rotate -$angle "$file" "$t"
@@ -113,17 +113,21 @@ fi
 
 tmpfile=$(tmpfile)
 tmpfiles+=($tmpfile)
+echo "$IMG: Deskewing and adding border < '$IMG' > '$tmpfile'" 1>&2
 convert "$IMG" -bordercolor black -border 100x100 -negate -deskew ${workflow_deskew[deskew_percentage]}% -negate $tmpfile
 
 # Calculate centroid
+echo "$IMG: Finding image centroid < '$tmpfile'" 1>&2
 image-centroid $tmpfile | while read x y filename; do
     trap cleanup_tmpfiles SIGHUP SIGINT SIGQUIT SIGABRT SIGTERM
 
     echo "$IMG: centroid x='$x' y='$y'" 1>&2
 
     tmpfile2=$(tmpfile); tmpfiles+=($tmpfile2)
+    echo "$IMG: Calculating negative to help with unpaper processing < '$tmpfile' > '$tmpfile2'" 1>&2
     convert $tmpfile -negate $tmpfile2
 
+    echo "$IMG: Calculating document mask < '$tmpfile2'" 1>&2
     # Use mask-scan-size 5,5 to reliably detect sharp edges of paper sheets near the borders
     MASK_OUT=$(unpaper -T -vvv --overwrite --layout none \
             --no-blackfilter --no-noisefilter --no-blurfilter --no-grayfilter --no-deskew \
@@ -136,6 +140,7 @@ image-centroid $tmpfile | while read x y filename; do
     if [ "$MASK" != "NO MASK FOUND" ]; then
 
         tmpfile3=$(tmpfile); tmpfiles+=($tmpfile3)
+        echo "$IMG: Extracting mask region from original image < '$tmpfile2' > '$tmpfile3'" 1>&2
         unpaper ${verbose:+-vvv} --layout single --overwrite \
                 --no-blackfilter --no-noisefilter --no-blurfilter --no-grayfilter --no-deskew \
                 --no-mask-scan --mask "$MASK" \
@@ -143,6 +148,7 @@ image-centroid $tmpfile | while read x y filename; do
 
         echo $MASK | masksize | (
             read dx dy
+            echo "$IMG: Recentering and cropping masked region < '$tmpfile3' > '$OUTIMG'" 1>&2
             convert $tmpfile3 -gravity Center -crop $((dx))x$((dy))+0+0\! -negate "$OUTIMG"
             [ -n "$rotate" ] && fix_orientation "$OUTIMG"
         )
