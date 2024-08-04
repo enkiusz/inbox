@@ -3,7 +3,7 @@
 export LC_ALL=C
 
 set -o errexit -o pipefail
-set -x 
+set -x
 
 [ -z "$INBOX_CONF" ] && INBOX_CONF="/etc/default/inbox.conf"
 eval "$(ini2bash "$INBOX_CONF")"
