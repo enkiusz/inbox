@@ -129,6 +129,8 @@ class Pagelist(object):
         with open(metadata_filename, 'w') as f:
             log.info('saving metadata', file=metadata_filename)
             metadata.write(f)
+            f.flush()
+            os.fsync(f.fileno())
 
         export_location = output_dir / self.location.name
         shutil.move(self.location, export_location)
@@ -182,6 +184,8 @@ class Display(object):
 
     def update(self, pagelist: Pagelist):
         if self.client:
+            if config.get('scanloop.flag_filename', None) is not None:
+               Path(config.get('scanloop.flag_filename')).touch()
             self.h = (self.h + 1) % len(self.rotator)
             self.queue_status.text = f"D:{self.doc_num:02d} C:{self.cabinet_num:02d}   {'E' if self.error else ' '}{'J' if self.jam else ' '} {self.rotator[self.h]}"
             if pagelist:
