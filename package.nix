@@ -20,6 +20,7 @@
       (buildPythonPackage rec {
           pname = "pylcddc";
           version = "0.4.0";
+          format = "setuptools";
           src = fetchPypi {
             inherit pname version;
             sha256 = "1qyzq3vinlj0c3p4i7b06kh519bvhichh45r4j4nakc70qdk54x6";
