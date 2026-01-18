@@ -184,8 +184,6 @@ class Display(object):
 
     def update(self, pagelist: Pagelist):
         if self.client:
-            if self.config.get('scanloop.flag_filename', None) is not None:
-               Path(config.get('scanloop.flag_filename')).touch()
             self.h = (self.h + 1) % len(self.rotator)
             self.queue_status.text = f"D:{self.doc_num:02d} C:{self.cabinet_num:02d}   {'E' if self.error else ' '}{'J' if self.jam else ' '} {self.rotator[self.h]}"
             if pagelist:
